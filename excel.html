@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Excel das contas · Contas Taxi</title>
+<style>
+  :root { --fundo:#ffffff; --cartao:#f4f6f9; --texto:#1c2430; --suave:#5a6676; --linha:#d9dfe7; --realce:#1a5fb4; --realce-texto:#ffffff; --erro:#b3261e; }
+  @media (prefers-color-scheme: dark) { :root { --fundo:#14181f; --cartao:#1c222c; --texto:#e6ebf2; --suave:#9aa6b6; --linha:#2b3442; --realce:#7ab4f5; --realce-texto:#0e1a2b; --erro:#ff8a80; } }
+  * { box-sizing:border-box; }
+  body { background:var(--fundo); color:var(--texto); font:17px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; margin:0; }
+  main { max-width:640px; margin:0 auto; padding:32px 16px 64px; }
+  h1 { font-size:1.6rem; line-height:1.25; margin:0 0 4px; }
+  h2 { font-size:1.1rem; margin:28px 0 8px; }
+  p { margin:8px 0; }
+  .suave { color:var(--suave); font-size:.95rem; }
+  .erro { color:var(--erro); }
+  button { font:inherit; cursor:pointer; border:0; border-radius:12px; padding:12px 18px; background:var(--realce); color:var(--realce-texto); font-weight:600; }
+  button.sec { background:transparent; color:var(--realce); border:1px solid var(--linha); font-weight:500; padding:8px 14px; }
+  button[disabled] { opacity:.55; cursor:default; }
+  .linha { display:flex; align-items:center; justify-content:space-between; gap:12px; background:var(--cartao); border:1px solid var(--linha); border-radius:14px; padding:12px 14px; margin:8px 0; }
+  .linha .mes { font-weight:600; }
+  .topo { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Excel das contas</h1>
+  <p class="suave">Contas Taxi · o Excel mensal que o motorista partilhou contigo.</p>
+
+  <section id="entrar" hidden>
+    <p>Entra com a conta Google do email com que foste convidada/o.</p>
+    <p><button id="btnEntrar">Entrar com Google</button></p>
+    <p id="erroEntrar" class="erro" hidden></p>
+  </section>
+
+  <section id="dentro" hidden>
+    <div class="topo">
+      <span class="suave" id="quem"></span>
+      <button class="sec" id="btnSair">Sair</button>
+    </div>
+    <div id="lista"></div>
+    <p id="vazio" class="suave" hidden></p>
+    <p id="msg" class="erro" hidden></p>
+  </section>
+
+  <p class="suave" style="margin-top:40px">Só vês os ficheiros de quem te convidou. Os teus dados da conta Google não são guardados nesta página.
+    <a href="./">Política de privacidade</a></p>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  var SB = "https://esvrphwvfgggmtoarzsj.supabase.co";
+  var CHAVE = "sb_publishable_R-wJUxQ4wbSMM-Gl6O9thw_jY1hqzor";   // chave publica: pode estar aqui
+  var PAGINA = location.origin + location.pathname;
+  var MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+
+  var $ = function (id) { return document.getElementById(id); };
+  function mostrar(id, sim) { $(id).hidden = !sim; }
+
+  function guardarSessao(t) { try { sessionStorage.setItem("sb_token", t); } catch (e) {} }
+  function lerSessao() { try { return sessionStorage.getItem("sb_token") || ""; } catch (e) { return ""; } }
+  function limparSessao() { try { sessionStorage.removeItem("sb_token"); } catch (e) {} }
+
+  function cab(token, extra) {
+    var h = { "apikey": CHAVE, "Authorization": "Bearer " + token };
+    for (var k in (extra || {})) h[k] = extra[k];
+    return h;
+  }
+
+  // o Supabase devolve o utilizador a esta pagina com os dados no «#»: guarda o token e limpa o endereco
+  function apanharRetorno() {
+    var h = location.hash.replace(/^#/, "");
+    if (!h) return "";
+    var p = new URLSearchParams(h);
+    var erro = p.get("error_description") || p.get("error");
+    var t = p.get("access_token");
+    history.replaceState(null, "", PAGINA);
+    if (t) { guardarSessao(t); return ""; }
+    return erro || "";
+  }
+
+  function sair() { limparSessao(); mostrar("dentro", false); mostrar("entrar", true); }
+
+  function dataPT(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    return d.toLocaleString("pt-PT", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
+
+  async function descarregar(token, dono, nome, botao) {
+    botao.disabled = true;
+    try {
+      var r = await fetch(SB + "/storage/v1/object/authenticated/excel-patrao/" + dono + "/" + encodeURIComponent(nome), { headers: cab(token) });
+      if (r.status === 401) { sair(); return; }
+      if (!r.ok) throw new Error("Erro " + r.status);
+      var blob = await r.blob();
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = nome;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 10000);
+    } catch (e) {
+      $("msg").textContent = "Não consegui descarregar: " + e.message;
+      mostrar("msg", true);
+    } finally {
+      botao.disabled = false;
+    }
+  }
+
+  async function carregar() {
+    var token = lerSessao();
+    if (!token) { mostrar("entrar", true); return; }
+    try {
+      var u = await fetch(SB + "/auth/v1/user", { headers: cab(token) });
+      if (u.status === 401 || u.status === 403) { sair(); return; }
+      var user = await u.json();
+      var email = (user.email || "").toLowerCase();
+      $("quem").textContent = email;
+      mostrar("entrar", false);
+      mostrar("dentro", true);
+
+      var pr = await fetch(SB + "/rest/v1/partilhas?select=dono,dono_nome&order=criado&convidado=eq." + encodeURIComponent(email), { headers: cab(token) });
+      if (pr.status === 401) { sair(); return; }
+      if (!pr.ok) throw new Error("Erro " + pr.status);
+      var donos = await pr.json();
+      var lista = $("lista");
+      lista.textContent = "";
+      var total = 0;
+      for (var i = 0; i < donos.length; i++) {
+        const dono = donos[i];
+        const lr = await fetch(SB + "/storage/v1/object/list/excel-patrao", {
+          method: "POST",
+          headers: cab(token, { "Content-Type": "application/json" }),
+          body: JSON.stringify({ prefix: dono.dono, limit: 100, offset: 0, sortBy: { column: "name", order: "desc" } })
+        });
+        if (!lr.ok) continue;
+        var ficheiros = (await lr.json()).filter(function (f) { return /^Contas_\d{4}-\d{2}\.xlsx$/.test(f.name || ""); });
+        if (!ficheiros.length) continue;
+        var h2 = document.createElement("h2");
+        h2.textContent = dono.dono_nome ? "Contas de " + dono.dono_nome : "Contas";
+        lista.appendChild(h2);
+        ficheiros.forEach(function (f) {
+          const m = /^Contas_(\d{4})-(\d{2})\.xlsx$/.exec(f.name);
+          var linha = document.createElement("div");
+          linha.className = "linha";
+          var esq = document.createElement("div");
+          var mes = document.createElement("div");
+          mes.className = "mes";
+          mes.textContent = MESES[parseInt(m[2], 10) - 1] + " " + m[1];
+          var at = document.createElement("div");
+          at.className = "suave";
+          at.textContent = f.updated_at ? "Atualizado a " + dataPT(f.updated_at) : "";
+          esq.appendChild(mes);
+          esq.appendChild(at);
+          const b = document.createElement("button");
+          b.textContent = "Descarregar";
+          b.addEventListener("click", function () { descarregar(token, dono.dono, f.name, b); });
+          linha.appendChild(esq);
+          linha.appendChild(b);
+          lista.appendChild(linha);
+          total++;
+        });
+      }
+      var vazio = $("vazio");
+      if (!total) {
+        vazio.textContent = donos.length
+          ? "Ainda não há nenhum Excel enviado. Pede ao motorista para enviar."
+          : "Ainda ninguém te convidou com o email " + email + ". Confirma que entraste com o mesmo email do convite.";
+      }
+      mostrar("vazio", !total);
+    } catch (e) {
+      $("msg").textContent = "Não consegui carregar: " + e.message;
+      mostrar("msg", true);
+    }
+  }
+
+  $("btnEntrar").addEventListener("click", function () {
+    location.href = SB + "/auth/v1/authorize?provider=google&redirect_to=" + encodeURIComponent(PAGINA);
+  });
+  $("btnSair").addEventListener("click", sair);
+
+  var erro = apanharRetorno();
+  if (erro) { $("erroEntrar").textContent = "Não consegui entrar: " + erro; mostrar("erroEntrar", true); }
+  carregar();
+})();
+</script>
+</body>
+</html>
